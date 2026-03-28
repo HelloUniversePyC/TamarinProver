@@ -1,7 +1,7 @@
 theory ExerciseSymmetricEncryption
 begin
 
-builtins: symmetric-encryption
+builtins: symmetric-encryption 
 
 rule KeyGen:
   [ Fr(~k) ]
@@ -9,10 +9,16 @@ rule KeyGen:
   [ !LongTermKey($A, ~k) ]
 
 rule SendMsg:
-  []
-  --[ // MessageWasSentBy($A, ~msg)
+  [St_Alice($A), Fr(~msg), Fr(~k)]
+  --[MessageWasSentBy($A, ~msg)
     ]->
-  []
+  [St_Alice($A), OUT(senc(~msg,~k))]
+
+rule Leak:
+  [Fr(~k)]
+  --[KeyLeaked(~k)
+    ]->
+  [Out(~k)]
 
 lemma Secrecy:
   "All p m #t. MessageWasSentBy(p, m) @ #t ==> not Ex #x. K(m) @ #x"

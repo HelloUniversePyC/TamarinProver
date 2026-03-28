@@ -3,55 +3,52 @@ begin
 
 builtins: symmetric-encryption, diffie-hellman
 
-rule Ltk:
-  // let publicComponent = _^_ in
-  []
-  -->
-  []
-
+// Rule to generate the initial setup for Alice
 rule A_Init:
-  []
+    [ Fr(~a) ]
   --[ ReachAInit() ]->
-  [ // Out(...)
-  // , St_A(...)
-  ]
+    [ Out('g'^~a)
+    , St_A($A, $B, ~a) // Store secret component
+    ]
 
+// Rule for Bob to receive A's public component and respond
 rule B_Init:
-  // let sharedKey = _^_ in
-  [ // In(...)
-  ]
+    [ Fr(~b)
+    , In(publicA)
+    ]
   --[ ReachBInit()
-    // , ResponderKey(_)
-    ]->
-  [ // Out(...)
-  ]
+    , ResponderKey(publicA^~b) // Shared secret computed here
+    ]
+  ->
+    [ Out('g'^~b)
+    , St_B($B, $A, ~b, publicA^~b) // Store secret
+    ]
 
+// Rule for Alice to receive B's public component and send encrypted message
 rule A_SendMsg:
-  // let sharedKey = _^_ in
-  [ // In(...)
-  // , St_A(...)
-  ]
+    [ St_A($A, $B, ~a)
+    , In(publicB)
+    , Fr(~msg) // Fresh message to send
+    ]
   --[ ReachASendMsg()
-    // MessageWasSent(_)
-    // , InitiatorKey(_)
-    ]->
-  [ // Out(...)
-  ]
+    , MessageWasSent(senc(~msg, publicB^~a)) // Shared secret computed here
+    , InitiatorKey(publicB^~a)
+    ]
+  ->
+    [ Out(senc(~msg, publicB^~a)) ]
 
-// This restriction allows you to use the Eq action fact in rules to constrain
-// that two terms must be equal. This is used to "compare" two messages or
-// terms, e.g., to check that signature verification is equal to true.
-// This rule is only commented out right now to suppress a warning that Eq is
-// referenced but not used. Un-comment it whenever you want!
-// restriction Eq:
-//   "All t1 t2 #x. Eq(t1, t2) @ #x ==> t1 = t2"
+// --- Restrictions and Lemmas ---
 
+// Ensures that terms in Eq facts are equal
+restriction Eq:
+    "All t1 t2 #x. Eq(t1, t2) @ #x ==> t1 = t2"
+
+// Lemma to check if the protocol can reach the final state
 lemma Executability:
-  exists-trace
-  "Ex #t1 #t2 #t3. ReachAInit() @ #t1 & ReachBInit() @ #t2 & ReachASendMsg() @ #t3"
+    exists-trace "Ex #t1 #t2 #t3. 
+        ReachAInit() @ #t1 & ReachBInit() @ #t2 & ReachASendMsg() @ #t3"
 
-// K(m) @ #t means that the adversary knows message m at timepoint #t.
-// Again, the following lemmas are commented out to suppress warnings.
+// Secrecy lemmas (uncomment to test against adversary)
 // lemma ResponderKeySecrecy:
 //   "All k #t. ResponderKey(k) @ #t ==> not Ex #x. K(k) @ #x"
 
