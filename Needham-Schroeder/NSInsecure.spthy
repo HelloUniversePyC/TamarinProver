@@ -58,44 +58,54 @@ rule A1:
 
 // Recieve first message, send second message
 rule B1:
-    let m1 = aenc {'1', _, nA} _ // Define message that B recieves
-         m2 = aenc {'2', nA, ~nB} pkA // Encode (N_A, N_B) with A's public key
-    in
-    [ _($B, _) // Look up B's secret key
-    , In(m1) // Read message from A
-    , Fr(~nB) // Generate fresh nonce
-    , !Pk(_, _)  // Look up A's public key
-    ]
-  --[ IN_B1(nA, m1) // Ignore these action facts, they are used to optimize the proof search
-    , OUT_B1(m2)
-    , Running(A, $B, <'init', nA, ~nB>)
+  let m2 = aenc{'2', nA, ~nB} pkA
+  in
+  [ !Ltk($B, ltkB)
+  , In(m1)
+  , Fr(~nB)
+  , !Pk($A, pkA)
+  ]
+  --[ IN_B1(nA, m1)
+     , OUT_B1(m2)
+     , Running($A, $B, <'init', nA, ~nB>)
     ]->
-    [ ... // Store sender, reciever and both nonces
-    , Out(m2) // Output message
-    ]
-
+  [ B1($A, $B, nA, ~nB)
+  , Out(m2)
+  ]
+  where
+    m1 = aenc{'1', $A, nA} pk($B)
+    & adec(m1, ltkB) = {'1', $A, nA}
 // Recieve second message, send third message
 rule A2:
-    [ 
-    // Remember to use the 'A1' fact here! 
-    // ...
-    ]
+  let m3 = aenc{nB} pkB
+  in
+  [ A1($A, $B, nA)
+  , !Ltk($A, ltkA)
+  , !Pk($B, pkB)
+  , In(m2)
+  ]
   --[ IN_A2(nB, m2)
-    , Commit(A, B, <'init', nA, nB>)
-    , Running(B, A, <'resp', nA, nB>)
-    , Secret(A, B, nA)
-    , Secret(A, B, nB)
+     , Commit($A, $B, <'init', nA, nB>)
+     , Running($B, $A, <'resp', nA, nB>)
+     , Secret($A, $B, nA)
+     , Secret($A, $B, nB)
     ]->
-    [...]
-
+  [ Out(m3) ]
+  where
+    adec(m2, ltkA) = {'2', nA, nB}
 // Recieve third message
 rule B2:
-    [...]
-  --[ 
-    // We need 1 'Commit' term and 2 'Secret' terms
-    // ...
+  [ B1($A, $B, nA, nB)
+  , !Ltk($B, ltkB)
+  , In(m3)
+  ]
+  --[ Commit($B, $A, <'resp', nA, nB>)
+     , Secret($B, $A, nA)
+     , Secret($B, $A, nB)
     ]->
-    []
+  []
+  where
+    adec(m3, ltkB) = nB
 
 /*
 This lemma constructs an invariant that helps the prover converge.
@@ -120,18 +130,13 @@ lemma types [sources]:
 
 // Nonce secrecy from the perspective of both the initiator and the responder.
 lemma nonce_secrecy:
-  " // It cannot be that
-    not(
-        Ex A B s #i.
-          // somebody claims to have setup a shared secret,
-          // ...
-          // but the adversary knows it
-        & // ...
-          // without having performed a long-term key reveal. 
-        & not (Ex #r. LtkReveal(A) @ r)
-        & not (Ex #r. LtkReveal(B) @ r)
-       )"
-
+  "not(
+    Ex A B n #i #j.
+        Secret(A,B,n) @ i
+      & KU(n) @ j
+      & not (Ex #r. LtkReveal(A) @ r)
+      & not (Ex #r. LtkReveal(B) @ r)
+  )"
 // Consistency check: ensure that secrets can be shared between honest agents.
 lemma session_key_setup_possible:
   exists-trace

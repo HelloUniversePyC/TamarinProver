@@ -15,4 +15,160 @@ begin
 // Copy over the code from NSInsecure.spthy and make the necessary changes to the rules. 
 // All the lemmas should now pass!
 
+/*
+This builtin gives us access to 3 function symbols -- aenc, adec, and pk -- satisfying the following
+equality:
+    adec(aenc(m, pk(sk)), sk) = m
+Note the distinction between the public key and the secret key, unlike symmetric encryption.
+*/
+builtins: asymmetric-encryption
+
+
+// The following rules define the public key infrastructure
+
+// Rule to register a new key
+rule RegLtk:
+    [ Fr(~ltkA) ]
+    -->
+    [ !Ltk($A, ~ltkA), !Pk($A, pk(~ltkA)), Out(pk(~ltkA)) ]
+
+// This allows an adversary to retrieve a public key
+rule GetPk:
+    [ !Pk($A, pkA) ]
+    -->
+    [ Out(pkA) ]
+
+// This allows us to model a secret key being revealed, but ensures that this is logged by an action
+rule RevLtk:
+    [ !Ltk($A, ltkA) ] // Look up secret key
+    --[ LtkReveal($A) ]->
+    [ Out(ltkA) ] // Announce secret key
+
+
+// We now define our protocol
+
+// Send first message
+rule A1:
+    let m1 = aenc {'1', $A, ~nA} pkB // Encode (A, N_A) with B's public key
+    in
+    [ Fr(~nA) // Generate fresh nonce
+    , !Pk($B, pkB) // Look up public key
+    ] 
+  --[ OUT_A1(m1) // Ignore this action fact, it is used to optimize the proof search
+    ]->
+    [ A1($A, $B, ~nA) // Store sender, reciever and nonce
+    , Out(m1) // Output message
+    ]
+
+// Recieve first message, send second message
+rule B1:
+  let m2 = aenc{'2', nA, ~nB, $B} pkA   // ✅ include B's identity
+  in
+  [ !Ltk($B, ltkB)
+  , In(m1)
+  , Fr(~nB)
+  , !Pk($A, pkA)
+  ]
+  --[ IN_B1(nA, m1)
+     , OUT_B1(m2)
+     , Running($A, $B, <'init', nA, ~nB>)
+    ]->
+  [ B1($A, $B, nA, ~nB)
+  , Out(m2)
+  ]
+  where
+    m1 = aenc{'1', $A, nA} pk($B)
+    & adec(m1, ltkB) = {'1', $A, nA}
+
+
+// Recieve second message, send third message
+rule A2:
+  let m3 = aenc{nB} pkB
+  in
+  [ A1($A, $B, nA)
+  , !Ltk($A, ltkA)
+  , !Pk($B, pkB)
+  , In(m2)
+  ]
+  --[ IN_A2(nB, m2)
+     , Commit($A, $B, <'init', nA, nB>)
+     , Running($B, $A, <'resp', nA, nB>)
+     , Secret($A, $B, nA)
+     , Secret($A, $B, nB)
+    ]->
+  [ Out(m3) ]
+  where
+    adec(m2, ltkA) = {'2', nA, nB, $B}   // fix is to check b's identidy
+rule B2:
+  [ B1($A, $B, nA, nB)
+  , !Ltk($B, ltkB)
+  , In(m3)
+  ]
+  --[ Commit($B, $A, <'resp', nA, nB>)
+     , Secret($B, $A, nA)
+     , Secret($B, $A, nB)
+    ]->
+  []
+  where
+    adec(m3, ltkB) = nB
+
+/*
+This lemma constructs an invariant that helps the prover converge.
+Feel free to treat this as a black box.
+*/
+lemma types [sources]:
+  " (All ni m1 #i.
+        IN_B1(ni, m1) @ i
+        ==>
+        ( (Ex #j. KU(ni) @ j & j < i)
+        | (Ex #j. OUT_A1(m1) @ j)
+        )
+    )
+  & (All nr m2 #i.
+        IN_A2(nr, m2) @ i
+        ==>
+        ( (Ex #j. KU(nr) @ j & j < i)
+        | (Ex #j. OUT_B1(m2) @ j)
+        )
+    )
+  "
+
+// Nonce secrecy from the perspective of both the initiator and the responder.
+lemma nonce_secrecy:
+  "not(
+    Ex A B n #i #j.
+        Secret(A,B,n) @ i
+      & KU(n) @ j
+      & not (Ex #r. LtkReveal(A) @ r)
+      & not (Ex #r. LtkReveal(B) @ r)
+  )"
+// Consistency check: ensure that secrets can be shared between honest agents.
+lemma session_key_setup_possible:
+  exists-trace
+  " // It is possible that
+    // ...
+      // somebody claims to have setup a shared secret, 
+      // ...
+      // without the adversary having performed a long-term key reveal. 
+    // ...
+    // ...
+  "
+
+// Injective agreement from the perspective of both the initiator and the responder.
+lemma injective_agree:
+  " // Whenever somebody commits to running a session, then 
+    All actor peer params #i.
+        Commit(actor, peer, params) @ i
+      ==>
+        // there is somebody running a session with the same parameters 
+          (Ex #j. Running(actor, peer, params) @ j & j < i
+            // and there is no other commit on the same parameters 
+            & not(Ex actor2 peer2 #i2.
+                    Commit(actor2, peer2, params) @ i2 & not(#i = #i2)
+                 )
+          )
+        // or the adversary perform a long-term key reveal on actor or peer 
+        | (Ex #r. LtkReveal(actor) @ r)
+        | (Ex #r. LtkReveal(peer)  @ r)
+  "
 end
